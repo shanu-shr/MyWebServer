@@ -2,11 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 	database "github.com/shanu-shr/goserver/Database"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -100,11 +105,13 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 	type parameters struct {
 		Email string `json:"email"`
 		Password string `json:"password"`
+		Expires int `json:"expires_in_seconds"`
 	}
 
 	type response struct {
 		Id int `json:"id"`
 		Email string `json:"email"`
+		Token string `json:"token"`
 	}
 
 	params := parameters{}
@@ -125,6 +132,85 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	fmt.Printf("Secret is %s\n",jwtSecret)
+
+	if params.Expires == 0 {
+		params.Expires = 1800
+	}
+	expi := time.Second * time.Duration(params.Expires)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Issuer: "chirpy",
+		IssuedAt: jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expi)),
+		Subject: strconv.Itoa(user.Id),
+	})
+
+	log.Printf("token acquired %s", token.Raw)
+	signedToken,err := token.SignedString([]byte(jwtSecret))
+	if err!= nil {
+		log.Printf("Error signing in token")
+		return 
+	}
+
+	log.Printf("Signin completed")
+
+	res := response{
+		Id: user.Id,
+		Email: user.Email,
+		Token: signedToken,
+	}
+	respondWithJson(w, http.StatusOK, res)
+}
+
+//validate the token befor updating
+func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, r *http.Request){
+	bearerToken := r.Header.Get("Authorization")
+	token := strings.TrimSpace(strings.TrimPrefix(bearerToken, "Bearer "))
+
+	claims := &jwt.RegisteredClaims{}
+	jwtSecret := os.Getenv("JWT_SECRET")
+
+	parsedToken, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (interface{}, error) {
+        return []byte(jwtSecret), nil
+    })
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
+	sb, err := parsedToken.Claims.GetSubject()
+	fmt.Printf("%s\n", sb)
+
+	if err!= nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	num, _ := strconv.Atoi(sb)
+
+	if err != nil {
+		respondWithError(w, 404, "")
+		return
+	}
+
+	type parameters struct {
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	params := parameters{}
+	decoder := json.NewDecoder(r.Body)
+	decoder.Decode(&params)
+
+	user, _:= cfg.db.PutUserById(num, params.Email, params.Password)
+
+	type response struct {
+		Id int `json:"id"`
+		Email string `json:"email"`
+	}
+
 	res := response{
 		Id: user.Id,
 		Email: user.Email,
@@ -136,6 +222,8 @@ func main(){
 	log.Printf("Starting the server")
 	const port = "8080"
 	const filePathRoot = "."
+
+	godotenv.Load()
 
 	mux := http.NewServeMux()
 	db,err := database.NewDB("database.json")
@@ -157,6 +245,7 @@ func main(){
 	mux.Handle("GET /api/chirps/{chirpID}", http.HandlerFunc(apicfg.getChirpByIdHandler))
 	mux.Handle("POST /api/users", http.HandlerFunc(apicfg.createUserHandler))
 	mux.Handle("POST /api/login", http.HandlerFunc(apicfg.loginHandler))
+	mux.Handle("PUT /api/users", http.HandlerFunc(apicfg.updateUserHandler))
 
 	srv := &http.Server{
 		Addr : ":"+port,

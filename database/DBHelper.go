@@ -66,8 +66,30 @@ func (db *DB) GetUser(email string)(User, error) {
 			return user, nil
 		}
 	}
-
 	return User{},errors.New("User not found")
+}
+
+func (db *DB) PutUserById(id int, email, password string)(User, error) {
+	dbStructure,err := db.loadDB()
+
+	if err != nil {
+		return User{}, err
+	}
+
+	for _, user:= range dbStructure.Users {
+		if user.Id == id {
+			
+			pass, _ := bcrypt.GenerateFromPassword([]byte(password), 2)
+			user.Email = email
+			user.Password = string(pass)
+
+			dbStructure.Users[id] = user
+			db.writeDB(dbStructure)		
+			return user, nil
+		}
+	}
+
+	return User{},errors.New("User Not found")
 }
 
 func (db *DB) CreateChirp(body string) (Chirp, error){
