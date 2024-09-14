@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+
+	database "github.com/shanu-shr/goserver/Database"
 )
 
 type apiConfig struct {
 	fileserverHits int
+	db *database.DB
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
@@ -18,14 +22,10 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
 	})
 }
 
-func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) validateChirpHandler(w http.ResponseWriter, r *http.Request) {
 
 	type parameters struct {
 		Body string `json:"body"`
-	}
-
-	type returnVals struct {
-		Cleaned_body string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -44,9 +44,29 @@ func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg := removeProfaneWords(params.Body)
-	respondWithJson(w, http.StatusOK, returnVals{
-		Cleaned_body: msg,
-	})
+
+	chirp,_ := cfg.db.CreateChirp(msg)
+	respondWithJson(w, http.StatusCreated, chirp)
+}
+
+func (cfg* apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request){
+	chirps, _ := cfg.db.GetChirps()
+	respondWithJson(w, http.StatusOK, chirps)
+}
+
+func (cfg *apiConfig) getChirpByIdHandler(w http.ResponseWriter, r *http.Request){
+	id := r.PathValue("chirpID")
+	chirps, _ := cfg.db.GetChirps()
+
+	for _,chirp := range chirps{
+		num, _ := strconv.Atoi(id)
+		if chirp.Id == num {
+			respondWithJson(w, http.StatusOK, chirp)
+			return
+		}
+	}
+
+	respondWithError(w, http.StatusNotFound, "")
 }
 
 func main(){
@@ -55,13 +75,23 @@ func main(){
 	const filePathRoot = "."
 
 	mux := http.NewServeMux()
-	apicfg := apiConfig{}
+	db,err := database.NewDB("database.json")
+	if err != nil{
+		log.Fatal(err)
+	}
+
+	apicfg := apiConfig{
+		fileserverHits: 0,
+		db: db,
+	}
 
 	mux.Handle("/app/", http.StripPrefix("/app", apicfg.middlewareMetricsInc(http.FileServer(http.Dir(filePathRoot)))))
 	mux.Handle("GET /api/healthz", http.HandlerFunc(myCustomHandler))
 	mux.Handle("GET /admin/metrics", http.HandlerFunc(apicfg.fileServerHitsLoggerHandler))
 	mux.Handle("GET /api/reset", http.HandlerFunc(apicfg.fileServerHitsResteHandler))
-	mux.Handle("POST /api/validate_chirp", http.HandlerFunc(validateChirpHandler))
+	mux.Handle("POST /api/chirps", http.HandlerFunc(apicfg.validateChirpHandler))
+	mux.Handle("GET /api/chirps", http.HandlerFunc(apicfg.getChirpHandler))
+	mux.Handle("GET /api/chirps/{chirpID}", http.HandlerFunc(apicfg.getChirpByIdHandler))
 
 	srv := &http.Server{
 		Addr : ":"+port,
@@ -73,7 +103,6 @@ func main(){
 }
 
 //Helper functions
-
 func removeProfaneWords(msg string) string {
 	words := strings.Split(msg, " ")
 	temp := ""
