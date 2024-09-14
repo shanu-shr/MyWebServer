@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"log"
 	"net/http"
 )
@@ -17,33 +17,34 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
 	})
 }
 
-func myCustomHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
-}
+func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
 
-func (cfg *apiConfig) fileServerHitsLoggerHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf(`
-<html>
+	type parameters struct {
+		Body string `json:"body"`
+	}
 
-<body>
-	<h1>Welcome, Chirpy Admin</h1>
-	<p>Chirpy has been visited %d times!</p>
-</body>
+	type returnVals struct {
+		Valid bool `json:"valid"`
+	}
 
-</html>
-	`, cfg.fileserverHits)))
-}
+	decoder := json.NewDecoder(r.Body)
+	var params parameters
 
+	err := decoder.Decode(&params)
+	if err!= nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
+		return
+	}
 
-func (cfg *apiConfig) fileServerHitsResteHandler (w http.ResponseWriter, r *http.Request) {
-	cfg.fileserverHits = 0
-	w.Header().Set("Content-Type", "text/palin; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	const maxChirpLength = 140
+	if len(params.Body)>maxChirpLength {
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
+		return
+	}
+
+	respondWithJson(w, http.StatusOK, returnVals{
+		Valid: true,
+	})
 }
 
 func main(){
@@ -58,6 +59,7 @@ func main(){
 	mux.Handle("GET /api/healthz", http.HandlerFunc(myCustomHandler))
 	mux.Handle("GET /admin/metrics", http.HandlerFunc(apicfg.fileServerHitsLoggerHandler))
 	mux.Handle("GET /api/reset", http.HandlerFunc(apicfg.fileServerHitsResteHandler))
+	mux.Handle("POST /api/validate_chirp", http.HandlerFunc(validateChirpHandler))
 
 	srv := &http.Server{
 		Addr : ":"+port,
@@ -68,3 +70,30 @@ func main(){
 	log.Fatal(srv.ListenAndServe())
 }
 
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	if code > 499 {
+		log.Printf("Responding with 5xx error %s", msg)
+	}
+
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+
+	respondWithJson(w, code, errorResponse{
+		Error: msg,
+	})
+}
+
+func respondWithJson(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+
+	data,err := json.Marshal(payload)
+	if err!= nil {
+		log.Printf("Error mashalling Json %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	w.WriteHeader(code)
+	w.Write(data)
+}
