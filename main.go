@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	database "github.com/shanu-shr/goserver/Database"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type apiConfig struct {
@@ -69,6 +70,68 @@ func (cfg *apiConfig) getChirpByIdHandler(w http.ResponseWriter, r *http.Request
 	respondWithError(w, http.StatusNotFound, "")
 }
 
+func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, r *http.Request){
+
+	type parameters struct {
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	type response struct {
+		Id int `json:"id"`
+		Email string `json:"email"`
+	}
+
+	params := parameters{}
+	decoder := json.NewDecoder(r.Body)
+	decoder.Decode(&params)
+
+	log.Printf("Email is %s", params.Email)
+	user,_ := cfg.db.CreateUser(params.Email, params.Password)
+
+	res := response{
+		Id: user.Id,
+		Email: user.Email,
+	}
+	respondWithJson(w, http.StatusCreated, res)
+}
+
+func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
+	type parameters struct {
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	type response struct {
+		Id int `json:"id"`
+		Email string `json:"email"`
+	}
+
+	params := parameters{}
+	decoder := json.NewDecoder(r.Body)
+	decoder.Decode(&params)
+
+	
+	user, err := cfg.db.GetUser(params.Email)
+	if err!= nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(params.Password))
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	res := response{
+		Id: user.Id,
+		Email: user.Email,
+	}
+	respondWithJson(w, http.StatusOK, res)
+}
+
 func main(){
 	log.Printf("Starting the server")
 	const port = "8080"
@@ -92,6 +155,8 @@ func main(){
 	mux.Handle("POST /api/chirps", http.HandlerFunc(apicfg.validateChirpHandler))
 	mux.Handle("GET /api/chirps", http.HandlerFunc(apicfg.getChirpHandler))
 	mux.Handle("GET /api/chirps/{chirpID}", http.HandlerFunc(apicfg.getChirpByIdHandler))
+	mux.Handle("POST /api/users", http.HandlerFunc(apicfg.createUserHandler))
+	mux.Handle("POST /api/login", http.HandlerFunc(apicfg.loginHandler))
 
 	srv := &http.Server{
 		Addr : ":"+port,
