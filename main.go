@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type apiConfig struct {
@@ -24,7 +25,7 @@ func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type returnVals struct {
-		Valid bool `json:"valid"`
+		Cleaned_body string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -42,8 +43,9 @@ func validateChirpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	msg := removeProfaneWords(params.Body)
 	respondWithJson(w, http.StatusOK, returnVals{
-		Valid: true,
+		Cleaned_body: msg,
 	})
 }
 
@@ -68,6 +70,21 @@ func main(){
 
 	log.Printf("Serving files from %s on port %s\n", filePathRoot, port)
 	log.Fatal(srv.ListenAndServe())
+}
+
+//Helper functions
+
+func removeProfaneWords(msg string) string {
+	words := strings.Split(msg, " ")
+	temp := ""
+
+	for i := 0; i <len(words); i++ {
+		temp = strings.ToLower(words[i])
+		if temp == "kerfuffle" || temp == "sharbert" || temp == "fornax" {
+			words[i] = "****"
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
